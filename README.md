@@ -34,6 +34,20 @@
 
 ## 📦 Installation（安裝方式）
 
+### 建立與啟動虛擬環境 (Virtual Environment)
+建議使用虛擬環境以避免套件衝突。
+
+```bash
+# 建立虛擬環境
+python -m venv venv
+
+# 啟動虛擬環境 (Windows)
+.\venv\Scripts\activate
+
+# 啟動虛擬環境 (Mac/Linux)
+source venv/bin/activate
+```
+
 ### 安裝 PyTorch（請依照您的 CUDA 版本調整）
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121

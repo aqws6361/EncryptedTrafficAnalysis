@@ -17,3 +17,6 @@ datasets/
 
 # 4. 忽略 Jupyter Notebook 的 checkpoint
 .ipynb_checkpoints/
+
+# 5. 忽略 testData 測試資料夾
+dataTest/
