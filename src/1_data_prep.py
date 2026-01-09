@@ -3,7 +3,7 @@ from scapy.all import PcapReader, IP
 import os
 
 # --- 設定參數 ---
-SEQUENCE_LENGTH = 20  # 視窗大小
+SEQUENCE_LENGTH = 50  # 視窗大小 (For Transformer)
 MAX_SAMPLES_PER_FILE = 5000  # 每個檔案最多抓幾筆樣本
 
 def process_pcap(file_path, label, seq_len=20):
@@ -93,7 +93,9 @@ if __name__ == "__main__":
     # 記得把對應的 .pcap 檔案放入 data 資料夾
     attack_files = [
         os.path.join(data_dir, "DDoS-ICMP_Flood.pcap"), 
-        os.path.join(data_dir, "DDoS-SYN_Flood1.pcap"),       
+        os.path.join(data_dir, "DDoS-SYN_Flood1.pcap"),
+        os.path.join(data_dir, "DDoS-PSHACK_Flood.pcap"), 
+        os.path.join(data_dir, "DoS-TCP_Flood.pcap"), 
         os.path.join(data_dir, "Mirai-udpplain1.pcap"), # 您可以隨時取消註解並加入新檔案
     ]
 

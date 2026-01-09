@@ -19,17 +19,48 @@ def get_device():
 
 device = get_device()
 
-# --- 2. 定義 LSTM 模型架構 ---
-class MalwareDetectorLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
-        super(MalwareDetectorLSTM, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
-        self.fc = nn.Linear(hidden_size, num_classes)
+# --- 2. 定義 Transformer 模型架構 ---
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        # Compute the positional encodings once in log space.
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1)]
+
+class MalwareDetectorTransformer(nn.Module):
+    def __init__(self, input_size, d_model, num_classes, nhead=4, num_layers=2, dim_feedforward=128, dropout=0.1):
+        super(MalwareDetectorTransformer, self).__init__()
+        
+        # 1. Feature Embedding: Project 2D features to d_model
+        self.embedding = nn.Linear(input_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
+        
+        # 2. Transformer Encoder
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
+        
+        # 3. Classifier
+        self.fc = nn.Linear(d_model, num_classes)
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
-        _, (h_n, _) = self.lstm(x)
-        out = h_n[-1, :, :]
-        out = self.fc(out)
+        # x shape: (batch_size, seq_len, input_size)
+        x = self.embedding(x)  # -> (batch, seq_len, d_model)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x)
+        
+        # Global Average Pooling
+        x = x.mean(dim=1)  # -> (batch, d_model)
+        x = self.dropout(x)
+        out = self.fc(x)
         return out
 
 if __name__ == "__main__":
@@ -82,14 +113,15 @@ if __name__ == "__main__":
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    # --- 4. 初始化模型 ---
+    # --- 4. 初始化模型 (Transformer 設定) ---
     INPUT_SIZE = 2
-    HIDDEN_SIZE = 64
+    D_MODEL = 64        # Embedding Dimension
     NUM_CLASSES = 2
     LEARNING_RATE = 0.001
-    EPOCHS = 10
-
-    model = MalwareDetectorLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_CLASSES).to(device)
+    EPOCHS = 15         # Transformer 可能需要多一點 epochs
+    
+    # 初始化 Transformer
+    model = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 

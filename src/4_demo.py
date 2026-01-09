@@ -22,27 +22,49 @@ def set_chinese_font():
 set_chinese_font()
 
 # --- 1. 定義模型架構 ---
-class MalwareDetectorLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
-        super(MalwareDetectorLSTM, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
-        self.fc = nn.Linear(hidden_size, num_classes)
+# --- 2. 定義模型架構 (Transformer) ---
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1)]
+
+class MalwareDetectorTransformer(nn.Module):
+    def __init__(self, input_size, d_model, num_classes, nhead=4, num_layers=2, dim_feedforward=128, dropout=0.1):
+        super(MalwareDetectorTransformer, self).__init__()
+        self.embedding = nn.Linear(input_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
+        self.fc = nn.Linear(d_model, num_classes)
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
-        _, (h_n, _) = self.lstm(x)
-        out = h_n[-1, :, :]
-        out = self.fc(out)
+        x = self.embedding(x)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x)
+        x = x.mean(dim=1)
+        x = self.dropout(x)
+        out = self.fc(x)
         return out
 
 # --- 2. 載入模型函式 (Debug 版 - 移除快取以免鎖死錯誤) ---
 # @st.cache_resource  <-- 先註解掉，避免快取住 "找不到檔案" 的狀態
 def load_model():
     INPUT_SIZE = 2
-    HIDDEN_SIZE = 64
+    D_MODEL = 64
     NUM_CLASSES = 2
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MalwareDetectorLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_CLASSES).to(device)
+    model = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
     
     # --- 強化的路徑搜尋邏輯 ---
     current_dir = os.path.dirname(os.path.abspath(__file__)) # src/
@@ -76,14 +98,23 @@ def load_model():
     try:
         model.load_state_dict(torch.load(target_model_path, map_location=device))
         model.eval()
-        # st.toast(f"已從此路徑載入模型：{target_model_path}") # 顯示成功訊息的小提示
         return model, device
+        
+    except RuntimeError as e:
+        if "Missing key(s)" in str(e) or "Unexpected key(s)" in str(e):
+            st.error("❌ **模型架構不匹配 (Model Mismatch)**")
+            st.warning("偵測到舊版的模型檔案！程式碼已更新為 Transformer 架構，但 `model/iot_malware_model.pth` 仍是舊的模型。")
+            st.info("💡 **解決方法**：請執行 `python src/2_train.py` 重新訓練模型，以覆蓋舊的檔案。")
+            return None, None
+        else:
+            st.error(f"❌ 模型載入發生未預期錯誤: {e}")
+            return None, None
     except Exception as e:
         st.error(f"❌ 模型載入發生錯誤: {e}")
         return None, None
 
 # --- 3. 封包處理函式 ---
-def preprocess_pcap(pcap_path, seq_len=20, max_packets=2000):
+def preprocess_pcap(pcap_path, seq_len=50, max_packets=2000):
     packet_sizes = []
     arrival_times = []
     
@@ -128,7 +159,7 @@ def preprocess_pcap(pcap_path, seq_len=20, max_packets=2000):
 st.set_page_config(page_title="IoT 加密流量偵測系統", page_icon="🛡️", layout="wide")
 
 st.title("🛡️ IoT Encrypted Traffic Detection System")
-st.markdown("### 基於深度學習 (LSTM) 之惡意流量行為分析")
+st.markdown("### 基於深度學習 (Transformer) 之惡意流量行為分析")
 st.markdown("---")
 
 # 側邊欄
@@ -168,7 +199,7 @@ if input_method == "上傳檔案 (.pcap)":
         st.success(f"已接收檔案: {uploaded_file.name}")
 
 else: 
-    local_path = st.text_input("請輸入檔案完整路徑", placeholder=r"例如: C:\Users\Admin\Desktop\碩士論文\data\DDoS-ICMP_Flood.pcap")
+    local_path = st.text_input("請輸入檔案完整路徑", placeholder=r"例如: C:\Users\Admin\Desktop\碩士論文\testData\DDoS-PSHACK_Flood10.pcap")
     local_path = local_path.strip('"').strip("'")
     if local_path:
         if os.path.exists(local_path):

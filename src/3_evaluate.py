@@ -28,16 +28,47 @@ def set_chinese_font():
 set_chinese_font()
 
 # --- 1. 定義模型 (需與訓練時一致) ---
-class MalwareDetectorLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes):
-        super(MalwareDetectorLSTM, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
-        self.fc = nn.Linear(hidden_size, num_classes)
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        # Compute the positional encodings once in log space.
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1)]
+
+class MalwareDetectorTransformer(nn.Module):
+    def __init__(self, input_size, d_model, num_classes, nhead=4, num_layers=2, dim_feedforward=128, dropout=0.1):
+        super(MalwareDetectorTransformer, self).__init__()
+        
+        # 1. Feature Embedding: Project 2D features to d_model
+        self.embedding = nn.Linear(input_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
+        
+        # 2. Transformer Encoder
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
+        
+        # 3. Classifier
+        self.fc = nn.Linear(d_model, num_classes)
+        self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
-        _, (h_n, _) = self.lstm(x)
-        out = h_n[-1, :, :]
-        out = self.fc(out)
+        # x shape: (batch_size, seq_len, input_size)
+        x = self.embedding(x)  # -> (batch, seq_len, d_model)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x)
+        
+        # Global Average Pooling
+        x = x.mean(dim=1)  # -> (batch, d_model)
+        x = self.dropout(x)
+        out = self.fc(x)
         return out
 
 def evaluate_performance():
@@ -49,26 +80,19 @@ def evaluate_performance():
     project_root = os.path.dirname(current_dir)
     
     # 3. 組合出正確的檔案路徑
-    # 假設您的結構是:
-    # root/
-    #   ├── data/
-    #   │   ├── X_data.npy
-    #   │   └── y_data.npy
-    #   ├── model/ (或 models)
-    #   │   └── iot_malware_model.pth
-    #   └── src/
-    #       └── 3_evaluate.py
-    
     x_path = os.path.join(project_root, "data", "X_data.npy")
     y_path = os.path.join(project_root, "data", "y_data.npy")
     model_path = os.path.join(project_root, "model", "iot_malware_model.pth") 
+    
+    # 圖片存檔路徑
+    cm_plot_path = os.path.join(project_root, 'confusion_matrix.png')
 
     print(f"DEBUG: 預期資料路徑: {x_path}")
     print(f"DEBUG: 預期模型路徑: {model_path}")
 
     # 設定參數
     INPUT_SIZE = 2
-    HIDDEN_SIZE = 64
+    D_MODEL = 64
     NUM_CLASSES = 2
     
     # 檢查檔案
@@ -82,7 +106,6 @@ def evaluate_performance():
 
     # --- 2. 載入資料 ---
     print("正在載入測試數據...")
-    # 修正：使用完整路徑載入
     X = np.load(x_path)
     y = np.load(y_path)
     
@@ -96,8 +119,7 @@ def evaluate_performance():
 
     # --- 3. 載入模型 ---
     print(f"正在載入模型...")
-    model = MalwareDetectorLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_CLASSES).to(device)
-    # 修正：使用完整路徑載入
+    model = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
@@ -132,11 +154,11 @@ def evaluate_performance():
     plt.ylabel('True Label (真實)')
     plt.title('Confusion Matrix - IoT Malware Detection')
     
-    # 存檔 (存到專案根目錄，比較好找)
-    save_path = os.path.join(project_root, 'confusion_matrix.png')
-    plt.savefig(save_path)
-    print(f"✅ 混淆矩陣已儲存為: {save_path}")
-    plt.show()
+    # 存檔
+    plt.savefig(cm_plot_path)
+    print(f"✅ 混淆矩陣已儲存為: {cm_plot_path}")
+    # 關閉圖表以釋放記憶體，避免在無顯示環境出錯
+    plt.close()
 
 if __name__ == "__main__":
     evaluate_performance()

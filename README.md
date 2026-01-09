@@ -4,14 +4,14 @@
 ## 📌 Project Overview（專案簡介）
 
 本研究旨在解決物聯網（IoT）環境中 **加密流量（Encrypted Traffic）** 的資安檢測問題。  
-透過深度學習技術 **Long Short-Term Memory (LSTM)**，在 **不解密封包內容（Payload）** 的前提下，  
+透過深度學習技術 **Transformer**，在 **不解密封包內容（Payload）** 的前提下，  
 僅利用流量的 **時序訊號特徵**（如封包大小序列、封包到達時間間隔），  
 即可準確識別多種惡意攻擊行為（如 **DDoS、Mirai Botnet**）。
 
 本專案涵蓋完整流程，包括：
 
 - 封包資料前處理（PCAP → 特徵序列）
-- 深度學習模型訓練（LSTM）
+- 深度學習模型訓練（Transformer）
 - 效能評估（Confusion Matrix、Classification Report）
 - Web 系統展示（Streamlit）
 
@@ -74,7 +74,7 @@ My_Thesis_Project/
 ├── src/                   # [程式碼區]
 │   ├── 0_plot_figures.py  # 論文用高品質訊號圖繪製
 │   ├── 1_data_prep.py     # PCAP → NPY 特徵工程
-│   ├── 2_train.py         # LSTM 模型訓練
+│   ├── 2_train.py         # Transformer 模型訓練
 │   ├── 3_evaluate.py      # 模型效能評估
 │   └── 4_demo.py          # Streamlit Web 展示系統
 └── README.md
@@ -111,7 +111,7 @@ python src/1_data_prep.py
 ---
 
 #### Step 2：模型訓練（Training）
-使用 LSTM 模型進行訓練，程式會自動偵測並啟用 GPU 加速。
+使用 Transformer 模型進行訓練，程式會自動偵測並啟用 GPU 加速。
 ```bash
 python src/2_train.py
 ```
