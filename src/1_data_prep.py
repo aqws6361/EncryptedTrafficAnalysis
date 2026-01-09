@@ -3,8 +3,8 @@ from scapy.all import PcapReader, IP
 import os
 
 # --- 設定參數 ---
-SEQUENCE_LENGTH = 20  # 每一個樣本看 20 個封包 (這就是我們的"視窗"大小)
-MAX_SAMPLES_PER_FILE = 5000  # 每個檔案最多抓幾筆樣本 (避免單一檔案太大跑太久)
+SEQUENCE_LENGTH = 20  # 視窗大小
+MAX_SAMPLES_PER_FILE = 5000  # 每個檔案最多抓幾筆樣本
 
 def process_pcap(file_path, label, seq_len=20):
     """
@@ -13,10 +13,10 @@ def process_pcap(file_path, label, seq_len=20):
       X: shape (n_samples, seq_len, 2) -> 特徵: [Packet Size, Inter-Arrival Time]
       y: shape (n_samples,) -> 標籤
     """
-    print(f"正在處理: {file_path} ...")
+    print(f"正在處理: {os.path.basename(file_path)} ...")
     
     if not os.path.exists(file_path):
-        print(f"錯誤: 找不到檔案 {file_path}")
+        print(f"❌ 錯誤: 找不到檔案 {file_path}")
         return [], []
 
     packet_sizes = []
@@ -24,7 +24,7 @@ def process_pcap(file_path, label, seq_len=20):
     
     # 1. 讀取封包特徵
     count = 0
-    # 為了節省時間，我們讀取足夠的量就停 (例如: MAX_SAMPLES * seq_len * 1.5)
+    # 讀取上限設定為樣本數的 2 倍左右，確保有足夠封包可切分
     limit = MAX_SAMPLES_PER_FILE * seq_len * 2 
     
     try:
@@ -44,15 +44,12 @@ def process_pcap(file_path, label, seq_len=20):
     print(f"  - 提取了 {len(packet_sizes)} 個封包，開始切分序列...")
 
     # 2. 轉換為時間差 (Inter-Arrival Time, IAT)
-    # IAT[i] = Time[i] - Time[i-1]
-    # 第一個封包的 IAT 設為 0
     iat = [0.0]
     for i in range(1, len(arrival_times)):
         diff = arrival_times[i] - arrival_times[i-1]
         iat.append(diff)
 
-    # 3. 切分為序列 (Sliding Window 或 Non-overlapping)
-    # 這裡使用簡單的 Non-overlapping (切完這段接下一段)
+    # 3. 切分為序列
     X_data = []
     y_data = []
     
@@ -66,10 +63,7 @@ def process_pcap(file_path, label, seq_len=20):
         seq_sizes = packet_sizes[start_idx:end_idx]
         seq_iat = iat[start_idx:end_idx]
         
-        # 組合特徵: [[size1, iat1], [size2, iat2], ...]
-        # Normalize: 簡單做個正規化，讓數值不要太大
-        # 封包大小通常 0-1500，除以 1500
-        # 時間差通常很小，暫時不除，或根據觀察調整
+        # 組合特徵 & 正規化
         features = []
         for s, t in zip(seq_sizes, seq_iat):
             features.append([s / 1500.0, t]) 
@@ -83,57 +77,67 @@ def process_pcap(file_path, label, seq_len=20):
     return X_data, y_data
 
 if __name__ == "__main__":
-    # 取得目前這支程式 (src/1_data_prep.py) 所在的資料夾
+    # --- 自動定位路徑 ---
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # 取得專案根目錄 (src 的上一層)
     project_root = os.path.dirname(current_dir)
-    # 定義 data 資料夾路徑
     data_dir = os.path.join(project_root, "data")
     
-    # 如果 data 資料夾不存在，自動建立它
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
         print(f"建立資料夾: {data_dir}")
 
-    # --- 1. 設定來源檔案路徑 ---
+    # --- 定義檔案來源 ---
     path_benign = os.path.join(data_dir, "BenignTraffic.pcap")
-    path_attack = os.path.join(data_dir, "DDoS-ICMP_Flood.pcap")
+    
+    # 在這裡加入所有您想訓練的攻擊類型
+    # 記得把對應的 .pcap 檔案放入 data 資料夾
+    attack_files = [
+        os.path.join(data_dir, "DDoS-ICMP_Flood.pcap"), 
+        os.path.join(data_dir, "DDoS-SYN_Flood1.pcap"),       
+        os.path.join(data_dir, "Mirai-udpplain1.pcap"), # 您可以隨時取消註解並加入新檔案
+    ]
 
-    # --- 2. 處理資料 ---
     all_X = []
     all_y = []
 
-    # 處理良性 (Label = 0)
+    # 1. 處理良性 (Label = 0)
+    print(f"--- 處理良性流量 ---")
     X_benign, y_benign = process_pcap(path_benign, label=0, seq_len=SEQUENCE_LENGTH)
     all_X.extend(X_benign)
     all_y.extend(y_benign)
 
-    # 處理惡意 (Label = 1)
-    X_attack, y_attack = process_pcap(path_attack, label=1, seq_len=SEQUENCE_LENGTH)
-    all_X.extend(X_attack)
-    all_y.extend(y_attack)
+    # 2. 處理多種惡意流量 (Label = 1)
+    print(f"--- 處理惡意流量 ---")
+    for attack_path in attack_files:
+        if os.path.exists(attack_path):
+            X_att, y_att = process_pcap(attack_path, label=1, seq_len=SEQUENCE_LENGTH)
+            all_X.extend(X_att)
+            all_y.extend(y_att)
+        else:
+            print(f"⚠️ 跳過 (找不到檔案): {os.path.basename(attack_path)}")
 
-    # --- 3. 轉換為 Numpy Array 並儲存到 data 資料夾 ---
+    # --- 3. 儲存 ---
     if len(all_X) > 0:
         X_array = np.array(all_X, dtype=np.float32)
         y_array = np.array(all_y, dtype=np.int32)
 
         print("-" * 30)
         print(f"資料處理完成！")
-        print(f"特徵矩陣 X shape: {X_array.shape}")
+        print(f"特徵矩陣 X shape: {X_array.shape}") # (樣本數, 20, 2)
         print(f"標籤矩陣 y shape: {y_array.shape}")
-        print(f"  - 樣本總數: {X_array.shape[0]}")
-        print(f"  - 序列長度: {X_array.shape[1]}")
-        print(f"  - 特徵數量: {X_array.shape[2]} (Size, IAT)")
         
-        # 修正：儲存到 data 資料夾
+        # 檢查資料平衡狀況
+        n_benign = np.sum(y_array == 0)
+        n_attack = np.sum(y_array == 1)
+        print(f"  - 良性樣本數: {n_benign}")
+        print(f"  - 惡意樣本數: {n_attack}")
+        
         save_x_path = os.path.join(data_dir, "X_data.npy")
         save_y_path = os.path.join(data_dir, "y_data.npy")
         
         np.save(save_x_path, X_array)
         np.save(save_y_path, y_array)
         
-        print(f"\n已儲存為:\n -> {save_x_path}\n -> {save_y_path}")
-        print("下一步：使用這些檔案來訓練 AI 模型。")
+        print(f"\n✅ 已儲存至 data 資料夾，下一步請執行 2_train.py")
     else:
-        print("沒有產生任何數據，請檢查檔案路徑是否正確。")
+        print("❌ 沒有產生任何數據，請檢查 pcap 檔案路徑。")
