@@ -1,19 +1,16 @@
-# 基於深度學習之 IoT 加密流量惡意行為偵測系統  
-**IoT Encrypted Traffic Malicious Behavior Detection Using Deep Learning**
-
 ## 📌 Project Overview（專案簡介）
 
 本研究旨在解決物聯網（IoT）環境中 **加密流量（Encrypted Traffic）** 的資安檢測問題。  
-透過深度學習技術 **Transformer**，在 **不解密封包內容（Payload）** 的前提下，  
+透過深度學習技術 **Transformer** 與 **LSTM**，在 **不解密封包內容（Payload）** 的前提下，  
 僅利用流量的 **時序訊號特徵**（如封包大小序列、封包到達時間間隔），  
 即可準確識別多種惡意攻擊行為（如 **DDoS、Mirai Botnet**）。
 
 本專案涵蓋完整流程，包括：
 
 - 封包資料前處理（PCAP → 特徵序列）
-- 深度學習模型訓練（Transformer）
+- 深度學習模型訓練（Transformer & LSTM）與比較
 - 效能評估（Confusion Matrix、Classification Report）
-- Web 系統展示（Streamlit）
+- Web 系統展示（Streamlit）並提供模型預測結果對比
 
 ---
 
@@ -70,13 +67,15 @@ My_Thesis_Project/
 │   ├── X_data.npy         # 自動產生
 │   └── y_data.npy         # 自動產生
 ├── model/                 # [模型區] 訓練完成的模型權重
-│   └── iot_malware_model.pth
+│   ├── iot_malware_model_transformer.pth
+│   └── iot_malware_model_lstm.pth
 ├── src/                   # [程式碼區]
 │   ├── 0_plot_figures.py  # 論文用高品質訊號圖繪製
 │   ├── 1_data_prep.py     # PCAP → NPY 特徵工程
-│   ├── 2_train.py         # Transformer 模型訓練
-│   ├── 3_evaluate.py      # 模型效能評估
-│   └── 4_demo.py          # Streamlit Web 展示系統
+│   ├── 2_train_transformer.py # Transformer 模型訓練
+│   ├── 2_train_lstm.py    # LSTM 模型訓練
+│   ├── 3_evaluate.py      # 模型效能評估與比較
+│   └── 4_demo.py          # Streamlit Web 展示系統 (含模型比較)
 └── README.md
 ```
 
@@ -111,38 +110,46 @@ python src/1_data_prep.py
 ---
 
 #### Step 2：模型訓練（Training）
-使用 Transformer 模型進行訓練，程式會自動偵測並啟用 GPU 加速。
+分別訓練 Transformer 與 LSTM 模型，以進行效能比較。
+
+**訓練 Transformer**:
 ```bash
-python src/2_train.py
+python src/2_train_transformer.py
+```
+
+**訓練 LSTM**:
+```bash
+python src/2_train_lstm.py
 ```
 
 📤 產出：
-- `model/iot_malware_model.pth`
-- 模型準確率約 98%+
+- `model/iot_malware_model_transformer.pth`
+- `model/iot_malware_model_lstm.pth`
 
 ---
 
 #### Step 3：效能評估（Evaluation）
-載入訓練完成的模型，對測試集進行推論並輸出評估結果。
+載入兩個訓練完成的模型，對同一測試集進行推論並輸出評估結果與混淆矩陣比較。
 ```bash
 python src/3_evaluate.py
 ```
 📤 產出：
-- `confusion_matrix.png`
+- `confusion_matrix_transformer.png`
+- `confusion_matrix_lstm.png`
 - Classification Report（Console 輸出）
 
 ---
 
 #### Step 4：系統展示（Demo）
-啟動 Streamlit Web 介面，進行即時惡意流量偵測展示。
+啟動 Streamlit Web 介面，進行展示。系統會自動載入存在的模型，並在分析時並列顯示兩者的偵測結果與一致性分析。
 ```bash
 streamlit run src/4_demo.py
 ```
 🔍 功能特色：
 
-- 支援 PCAP 檔案上傳
-- 支援 本機路徑讀取
-- 即時顯示 惡意風險指數
+- 支援 PCAP 檔案上傳 / 本機路徑讀取
+- **雙模型對照**：同時顯示 Transformer 與 LSTM 的判斷結果
+- **一致性分析**：分析兩個模型對同一流量的判斷是否一致
 - 視覺化流量訊號圖
 
 ---

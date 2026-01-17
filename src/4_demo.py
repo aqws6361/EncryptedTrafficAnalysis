@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import os
 import tempfile
 import platform
+import pandas as pd
 
 # --- 解決 Matplotlib 中文顯示問題 ---
 def set_chinese_font():
@@ -22,7 +23,8 @@ def set_chinese_font():
 set_chinese_font()
 
 # --- 1. 定義模型架構 ---
-# --- 2. 定義模型架構 (Transformer) ---
+
+# Transformer Components
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super(PositionalEncoding, self).__init__()
@@ -56,62 +58,72 @@ class MalwareDetectorTransformer(nn.Module):
         out = self.fc(x)
         return out
 
-# --- 2. 載入模型函式 (Debug 版 - 移除快取以免鎖死錯誤) ---
-# @st.cache_resource  <-- 先註解掉，避免快取住 "找不到檔案" 的狀態
-def load_model():
+# LSTM Components
+class MalwareDetectorLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, num_classes):
+        super(MalwareDetectorLSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, num_classes)
+        
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, input_size)
+        device = x.device
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        out, _ = self.lstm(x, (h0, c0)) 
+        out = out[:, -1, :] 
+        out = self.fc(out)
+        return out
+
+# --- 2. 載入模型函式 ---
+# @st.cache_resource 
+def load_models():
     INPUT_SIZE = 2
-    D_MODEL = 64
     NUM_CLASSES = 2
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
+    # Transformer Hyperparams
+    D_MODEL = 64
     
-    # --- 強化的路徑搜尋邏輯 ---
-    current_dir = os.path.dirname(os.path.abspath(__file__)) # src/
-    project_root = os.path.dirname(current_dir)              # root/
-    
-    # 定義所有可能的路徑 (依優先順序)
-    possible_paths = [
-        os.path.join(project_root, "model", "iot_malware_model.pth"),   # 標準結構: root/model/
-        os.path.join(project_root, "models", "iot_malware_model.pth"),  # 易錯結構: root/models/
-        os.path.join(current_dir, "iot_malware_model.pth"),             # 放在 src/ 裡
-        "iot_malware_model.pth"                                         # 當前執行目錄
-    ]
-    
-    target_model_path = None
-    
-    # 遍歷尋找
-    for path in possible_paths:
-        if os.path.exists(path):
-            target_model_path = path
-            break
-    
-    if target_model_path is None:
-        # 如果都找不到，顯示詳細 Debug 資訊
-        st.error("❌ **嚴重錯誤：找不到模型檔案**")
-        st.warning(f"系統已嘗試在以下路徑尋找，但都失敗：")
-        for p in possible_paths:
-            st.code(p)
-        st.info("💡 請確認 `iot_malware_model.pth` 確實存在於上述任一路徑中。")
-        return None, None
+    # LSTM Hyperparams
+    HIDDEN_SIZE = 64
+    NUM_LAYERS = 2
 
-    try:
-        model.load_state_dict(torch.load(target_model_path, map_location=device))
-        model.eval()
-        return model, device
-        
-    except RuntimeError as e:
-        if "Missing key(s)" in str(e) or "Unexpected key(s)" in str(e):
-            st.error("❌ **模型架構不匹配 (Model Mismatch)**")
-            st.warning("偵測到舊版的模型檔案！程式碼已更新為 Transformer 架構，但 `model/iot_malware_model.pth` 仍是舊的模型。")
-            st.info("💡 **解決方法**：請執行 `python src/2_train.py` 重新訓練模型，以覆蓋舊的檔案。")
-            return None, None
-        else:
-            st.error(f"❌ 模型載入發生未預期錯誤: {e}")
-            return None, None
-    except Exception as e:
-        st.error(f"❌ 模型載入發生錯誤: {e}")
-        return None, None
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Init Models
+    model_t = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
+    model_l = MalwareDetectorLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, NUM_CLASSES).to(device)
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__)) 
+    project_root = os.path.dirname(current_dir)
+    
+    # Define paths
+    path_t = os.path.join(project_root, "model", "iot_malware_model_transformer.pth")
+    path_l = os.path.join(project_root, "model", "iot_malware_model_lstm.pth")
+    
+    models_loaded = {}
+    
+    # Load Transformer
+    if os.path.exists(path_t):
+        try:
+            model_t.load_state_dict(torch.load(path_t, map_location=device))
+            model_t.eval()
+            models_loaded['Transformer'] = model_t
+        except Exception as e:
+            st.error(f"Transformer 模型載入失敗: {e}")
+    
+    # Load LSTM
+    if os.path.exists(path_l):
+        try:
+            model_l.load_state_dict(torch.load(path_l, map_location=device))
+            model_l.eval()
+            models_loaded['LSTM'] = model_l
+        except Exception as e:
+            st.error(f"LSTM 模型載入失敗: {e}")
+            
+    return models_loaded, device
 
 # --- 3. 封包處理函式 ---
 def preprocess_pcap(pcap_path, seq_len=50, max_packets=2000):
@@ -156,32 +168,37 @@ def preprocess_pcap(pcap_path, seq_len=50, max_packets=2000):
     return np.array(X_data, dtype=np.float32), packet_sizes, arrival_times
 
 # --- 4. Streamlit UI 主程式 ---
-st.set_page_config(page_title="IoT 加密流量偵測系統", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="IoT 加密流量偵測系統 - 模型比較", page_icon="🛡️", layout="wide")
 
 st.title("🛡️ IoT Encrypted Traffic Detection System")
-st.markdown("### 基於深度學習 (Transformer) 之惡意流量行為分析")
+st.markdown("### Deep Learning Model Comparison: Transformer vs. LSTM")
 st.markdown("---")
 
 # 側邊欄
 with st.sidebar:
     st.header("System Status")
     
-    # 加入一個重新整理按鈕
     if st.button("🔄 重新載入模型"):
         st.cache_resource.clear()
         
-    model, device = load_model()
+    models, device = load_models()
     
-    if model:
-        st.success(f"✅ AI 模型運作中")
-        st.caption(f"運算裝置: {device}")
+    st.markdown("#### 模型狀態")
+    if 'Transformer' in models:
+        st.success("✅ Transformer: Ready")
     else:
-        st.error("❌ 模型未就緒")
+        st.error("❌ Transformer: Not Found")
+        
+    if 'LSTM' in models:
+        st.success("✅ LSTM: Ready")
+    else:
+        st.error("❌ LSTM: Not Found")
+        
+    st.caption(f"運算裝置: {device}")
     
     st.markdown("---")
     st.header("Settings")
     max_analyze_packets = st.slider("最大分析封包數", 1000, 50000, 5000, 1000)
-    st.info("💡 提示：若檔案過大 (>200MB)，請使用本機路徑模式。")
 
 # 輸入模式
 input_method = st.radio("請選擇資料來源：", ("上傳檔案 (.pcap)", "輸入本機路徑 (Local Path)"), horizontal=True)
@@ -209,34 +226,83 @@ else:
             st.error("❌ 找不到檔案，請確認路徑是否正確")
 
 # 開始分析
-if target_path and model:
-    if st.button("🚀 開始分析", type="primary"):
+if target_path and models:
+    if st.button("🚀 開始分析比較", type="primary"):
         with st.spinner(f"正在分析前 {max_analyze_packets} 個封包特徵..."):
             processed_data = preprocess_pcap(target_path, max_packets=max_analyze_packets)
             
             if processed_data:
                 X_input, raw_sizes, raw_times = processed_data
-                
                 X_tensor = torch.from_numpy(X_input).to(device)
-                with torch.no_grad():
-                    outputs = model(X_tensor)
-                    _, predicted = torch.max(outputs.data, 1)
                 
-                preds = predicted.cpu().numpy()
-                malicious_count = np.sum(preds == 1)
-                total_count = len(preds)
-                malicious_rate = malicious_count / total_count if total_count > 0 else 0
+                results = {}
                 
-                st.markdown("### 📊 檢測結果分析")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("分析序列數", f"{total_count} 組")
-                col2.metric("惡意特徵檢出", f"{malicious_count} 組", delta_color="inverse")
-                col3.metric("惡意風險指數", f"{malicious_rate*100:.1f}%")
+                # --- Run Inference for All Available Models ---
+                for name, model in models.items():
+                    with torch.no_grad():
+                        outputs = model(X_tensor)
+                        probs = torch.softmax(outputs, dim=1)
+                        _, predicted = torch.max(outputs.data, 1)
+                        
+                    preds = predicted.cpu().numpy()
+                    probs_np = probs.cpu().numpy()
+                    
+                    malicious_count = np.sum(preds == 1)
+                    total_count = len(preds)
+                    malicious_rate = malicious_count / total_count if total_count > 0 else 0
+                    
+                    results[name] = {
+                        'malicious_count': malicious_count,
+                        'total': total_count,
+                        'rate': malicious_rate,
+                        'preds': preds,
+                        'probs': probs_np[:, 1] # Probability of being malicious
+                    }
+                
+                # --- Visualizing Results ---
+                st.markdown("### 📊 檢測結果比較 (Detection Results Comparison)")
+                
+                # Metric Columns
+                cols = st.columns(len(results))
+                for idx, (name, res) in enumerate(results.items()):
+                    with cols[idx]:
+                        st.subheader(f"{name} Model")
+                        st.metric("惡意特徵檢出", f"{res['malicious_count']} / {res['total']}")
+                        st.metric("惡意風險指數", f"{res['rate']*100:.1f}%")
+                        
+                        if res['rate'] > 0.5:
+                            st.error(f"⚠️ 判定: 惡意流量")
+                        else:
+                            st.success(f"✅ 判定: 正常流量")
 
-                if malicious_rate > 0.5:
-                    st.error(f"⚠️ 警告：偵測到惡意攻擊流量！ (DDoS/Malware)")
-                else:
-                    st.success(f"✅ 安全：此為正常 IoT 流量")
+                st.markdown("---")
+                
+                # --- Comparison Chart (Agreement/Disagreement) ---
+                if 'Transformer' in results and 'LSTM' in results:
+                    st.markdown("### 🔍 模型一致性分析 (Model Consensus Analysis)")
+                    
+                    preds_t = results['Transformer']['preds']
+                    preds_l = results['LSTM']['preds']
+                    
+                    agreement = np.sum(preds_t == preds_l)
+                    disagreement = np.sum(preds_t != preds_l)
+                    total = len(preds_t)
+                    
+                    col1, col2 = st.columns([1, 2])
+                    
+                    with col1:
+                        st.write(f"**總樣本數**: {total}")
+                        st.write(f"**一致預測**: {agreement} ({agreement/total*100:.1f}%)")
+                        st.write(f"**不一致預測**: {disagreement} ({disagreement/total*100:.1f}%)")
+                    
+                    with col2:
+                        # Bar chart for probabilities
+                        st.write("#### 惡意機率分佈比較 (Malicious Probability Distribution)")
+                        chart_data = pd.DataFrame({
+                            'Transformer': results['Transformer']['probs'],
+                            'LSTM': results['LSTM']['probs']
+                        })
+                        st.line_chart(chart_data)
 
                 st.markdown("---")
                 st.markdown("### 📈 流量訊號視覺化")
@@ -244,11 +310,15 @@ if target_path and model:
                 fig, ax = plt.subplots(figsize=(15, 4))
                 start_t = raw_times[0]
                 plot_times = [t - start_t for t in raw_times]
-                color = 'red' if malicious_rate > 0.5 else 'green'
+                
+                # Use primary model for color decision (Transformer if available, else first one)
+                primary_res = results.get('Transformer', list(results.values())[0])
+                color = 'red' if primary_res['rate'] > 0.5 else 'green'
+                
                 ax.plot(plot_times, raw_sizes, color=color, alpha=0.7, linewidth=1)
                 ax.set_xlabel("Time (seconds)")
                 ax.set_ylabel("Packet Size (bytes)")
-                ax.set_title(f"Packet Size Sequence ({'Attack Pattern' if malicious_rate > 0.5 else 'Normal Pattern'})")
+                ax.set_title(f"Packet Size Sequence")
                 ax.grid(True, alpha=0.3)
                 st.pyplot(fig)
             

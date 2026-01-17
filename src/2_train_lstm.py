@@ -19,48 +19,36 @@ def get_device():
 
 device = get_device()
 
-# --- 2. 定義 Transformer 模型架構 ---
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1)]
-
-class MalwareDetectorTransformer(nn.Module):
-    def __init__(self, input_size, d_model, num_classes, nhead=4, num_layers=2, dim_feedforward=128, dropout=0.1):
-        super(MalwareDetectorTransformer, self).__init__()
+# --- 2. 定義 LSTM 模型架構 ---
+class MalwareDetectorLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, num_classes):
+        super(MalwareDetectorLSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
         
-        # 1. Feature Embedding: Project 2D features to d_model
-        self.embedding = nn.Linear(input_size, d_model)
-        self.pos_encoder = PositionalEncoding(d_model)
+        # LSTM Layer
+        # batch_first=True mean input shape is (batch, seq, feature)
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         
-        # 2. Transformer Encoder
-        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, batch_first=True)
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
-        
-        # 3. Classifier
-        self.fc = nn.Linear(d_model, num_classes)
-        self.dropout = nn.Dropout(dropout)
+        # Fully Connected Layer
+        self.fc = nn.Linear(hidden_size, num_classes)
         
     def forward(self, x):
         # x shape: (batch_size, seq_len, input_size)
-        x = self.embedding(x)  # -> (batch, seq_len, d_model)
-        x = self.pos_encoder(x)
-        x = self.transformer_encoder(x)
         
-        # Global Average Pooling
-        x = x.mean(dim=1)  # -> (batch, d_model)
-        x = self.dropout(x)
-        out = self.fc(x)
+        # Initialize hidden state and cell state
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(device)
+        
+        # Forward propagate LSTM
+        out, _ = self.lstm(x, (h0, c0)) 
+        
+        # Use the output of the last time step
+        # out shape: (batch, seq_len, hidden_size)
+        out = out[:, -1, :] 
+        
+        # Classifier
+        out = self.fc(out)
         return out
 
 if __name__ == "__main__":
@@ -74,12 +62,12 @@ if __name__ == "__main__":
     # 確保 model 資料夾存在
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-        print(f"建立資料夾: {model_dir}")
 
     # 定義完整檔案路徑
     x_path = os.path.join(data_dir, "X_data.npy")
     y_path = os.path.join(data_dir, "y_data.npy")
-    model_save_path = os.path.join(model_dir, "iot_malware_model.pth")
+    # [MODIFY] LSTM model save path
+    model_save_path = os.path.join(model_dir, "iot_malware_model_lstm.pth")
 
     print(f"\n[Step 1] 正在檢查數據路徑...")
     print(f"   預期路徑 X: {x_path}")
@@ -100,6 +88,7 @@ if __name__ == "__main__":
         exit()
 
     # 切分訓練集 (80%) 與測試集 (20%)
+    # [IMPORTANT] random_state=42 Ensure same split as Transformer
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # 轉 Tensor
@@ -113,19 +102,20 @@ if __name__ == "__main__":
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    # --- 4. 初始化模型 (Transformer 設定) ---
+    # --- 4. 初始化模型 (LSTM 設定) ---
     INPUT_SIZE = 2
-    D_MODEL = 64        # Embedding Dimension
+    HIDDEN_SIZE = 64
+    NUM_LAYERS = 2
     NUM_CLASSES = 2
     LEARNING_RATE = 0.001
-    EPOCHS = 15         # Transformer 可能需要多一點 epochs
+    EPOCHS = 15
     
-    # 初始化 Transformer
-    model = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
+    # 初始化 LSTM
+    model = MalwareDetectorLSTM(INPUT_SIZE, HIDDEN_SIZE, NUM_LAYERS, NUM_CLASSES).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    print(f"\n[Step 2] 開始訓練 (Epochs: {EPOCHS})...")
+    print(f"\n[Step 2] 開始訓練 LSTM (Epochs: {EPOCHS})...")
     print("-" * 50)
 
     # --- 5. 訓練迴圈 ---
@@ -154,7 +144,7 @@ if __name__ == "__main__":
 
     training_time = time.time() - start_time
     print("-" * 50)
-    print(f"訓練完成! 總耗時: {training_time:.2f} 秒")
+    print(f"LSTM 訓練完成! 總耗時: {training_time:.2f} 秒")
 
     # --- 6. 測試 ---
     print("\n[Step 3] 評估測試集效能...")
@@ -165,8 +155,8 @@ if __name__ == "__main__":
         total = y_test_tensor.size(0)
         correct = (predicted == y_test_tensor).sum().item()
         test_acc = 100 * correct / total
-        print(f"🎯 測試集準確率: {test_acc:.2f}%")
+        print(f"🎯 LSTM 測試集準確率: {test_acc:.2f}%")
 
     # --- 7. 存檔 ---
     torch.save(model.state_dict(), model_save_path)
-    print(f"\n✅ 模型已儲存為 '{model_save_path}'")
+    print(f"\n✅ LSTM 模型已儲存為 '{model_save_path}'")
