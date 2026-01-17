@@ -3,7 +3,7 @@ from scapy.all import PcapReader, IP
 import os
 
 # --- 設定參數 ---
-SEQUENCE_LENGTH = 50  # 視窗大小 (配合您要做的 Transformer)
+SEQUENCE_LENGTH = 50  # 視窗大小 (Transformer)
 MAX_SAMPLES_PER_FILE = 5000  # 每個檔案最多抓幾筆樣本
 
 def process_pcap(file_path, label, seq_len=20):
