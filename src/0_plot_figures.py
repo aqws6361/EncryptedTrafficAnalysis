@@ -1,4 +1,5 @@
 from scapy.all import rdpcap, PcapReader, IP
+from scapy.error import Scapy_Exception
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
