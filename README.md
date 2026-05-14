@@ -176,4 +176,4 @@ src/ 內所有程式皆使用 相對路徑定位
 ### 👤 Author
 SHI-LIANG Deng
 Master Thesis Project
-Department of Information Engineering
+Department of Information Engineering 
