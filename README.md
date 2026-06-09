@@ -1,5 +1,5 @@
 ## 📌 Project Overview（專案簡介）
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20183743.svg)](https://doi.org/10.5281/zenodo.20183743)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20183743-blue)](https://doi.org/10.5281/zenodo.20183743)
 
 本研究旨在解決物聯網（IoT）環境中 **加密流量（Encrypted Traffic）** 的資安檢測問題。  
 透過深度學習技術 **Transformer** 與 **LSTM**，在 **不解密封包內容（Payload）** 的前提下，  
