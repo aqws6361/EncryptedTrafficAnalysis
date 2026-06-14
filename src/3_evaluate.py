@@ -84,20 +84,20 @@ def evaluate_performance():
     model_path_transformer = os.path.join(project_root, "model", "iot_malware_model_transformer.pth") 
     model_path_lstm = os.path.join(project_root, "model", "iot_malware_model_lstm.pth")
     
-    print(f"DEBUG: 預期資料路徑: {x_path}")
+    x_test_path = os.path.join(project_root, "data", "X_test.npy")
+    y_test_path = os.path.join(project_root, "data", "y_test.npy")
+    
+    print(f"DEBUG: 預期測試集路徑: {x_test_path}")
 
     # Check Data
-    if not os.path.exists(x_path) or not os.path.exists(y_path):
-        print(f"❌ 找不到數據檔案")
+    if not os.path.exists(x_test_path) or not os.path.exists(y_test_path):
+        print(f"[ERROR] 找不到測試集數據檔案，請先執行 1_data_prep.py")
         return
 
     # Load Data
     print("正在載入測試數據...")
-    X = np.load(x_path)
-    y = np.load(y_path)
-    
-    # Ensure same split as training
-    _, X_test, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_test = np.load(x_test_path)
+    y_test = np.load(y_test_path)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     X_test_tensor = torch.from_numpy(X_test).to(device)
@@ -116,7 +116,7 @@ def evaluate_performance():
         model_t.eval()
         models.append(("Transformer", model_t))
     else:
-        print(f"⚠️ 找不到 Transformer 模型: {model_path_transformer}")
+        print(f"[WARN] 找不到 Transformer 模型: {model_path_transformer}")
 
     # --- Load LSTM ---
     if os.path.exists(model_path_lstm):
@@ -126,10 +126,10 @@ def evaluate_performance():
         model_l.eval()
         models.append(("LSTM", model_l))
     else:
-        print(f"⚠️ 找不到 LSTM 模型: {model_path_lstm}")
+        print(f"[WARN] 找不到 LSTM 模型: {model_path_lstm}")
         
     if not models:
-        print("❌ 沒有可用的模型進行評估")
+        print("[ERROR] 沒有可用的模型進行評估")
         return
 
     # --- Evaluate Each Model ---
@@ -143,7 +143,7 @@ def evaluate_performance():
         y_pred = predicted.cpu().numpy()
         
         # Report
-        print(f"📊 {name} 分類詳細報表:")
+        print(f"[REPORT] {name} 分類詳細報表:")
         print(classification_report(y_true, y_pred, target_names=target_names))
         
         # Confusion Matrix
@@ -157,7 +157,7 @@ def evaluate_performance():
         
         save_path = os.path.join(project_root, f'confusion_matrix_{name.lower()}.png')
         plt.savefig(save_path)
-        print(f"✅ {name} 混淆矩陣已儲存為: {save_path}")
+        print(f"[SUCCESS] {name} 混淆矩陣已儲存為: {save_path}")
         plt.close()
 
 if __name__ == "__main__":

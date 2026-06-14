@@ -11,10 +11,10 @@ import os
 def get_device():
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name(0)
-        print(f"✅ 偵測到 GPU: {device_name}")
+        print(f"[GPU] 偵測到 GPU: {device_name}")
         return torch.device("cuda")
     else:
-        print("⚠️ 未偵測到 GPU，將使用 CPU 訓練")
+        print("[CPU] 未偵測到 GPU，將使用 CPU 訓練")
         return torch.device("cpu")
 
 device = get_device()
@@ -87,26 +87,38 @@ if __name__ == "__main__":
     print(f"   預期路徑 y: {y_path}")
 
     # --- 3. 載入資料 ---
-    if not os.path.exists(x_path) or not os.path.exists(y_path):
-        print(f"\n❌ 錯誤: 在上述路徑找不到 .npy 檔案！")
-        print(f"💡 請先執行 'python 1_data_prep.py' 來產生數據，並確保它儲存到 data 資料夾。")
+    x_train_path = os.path.join(data_dir, "X_train.npy")
+    y_train_path = os.path.join(data_dir, "y_train.npy")
+    x_val_path = os.path.join(data_dir, "X_val.npy")
+    y_val_path = os.path.join(data_dir, "y_val.npy")
+    x_test_path = os.path.join(data_dir, "X_test.npy")
+    y_test_path = os.path.join(data_dir, "y_test.npy")
+
+    if not all(os.path.exists(p) for p in [x_train_path, y_train_path, x_val_path, y_val_path, x_test_path, y_test_path]):
+        print(f"\n[ERROR] 錯誤: 找不到預切分的訓練/驗證/測試 .npy 檔案！")
+        print(f"[TIP] 請先執行 'python 1_data_prep.py' 來產生並切分數據。")
         exit()
 
     try:
-        X = np.load(x_path)
-        y = np.load(y_path)
-        print(f"✅ 資料載入成功! X shape: {X.shape}, y shape: {y.shape}")
+        X_train = np.load(x_train_path)
+        y_train = np.load(y_train_path)
+        X_val = np.load(x_val_path)
+        y_val = np.load(y_val_path)
+        X_test = np.load(x_test_path)
+        y_test = np.load(y_test_path)
+        print(f"[SUCCESS] 資料載入成功!")
+        print(f"   X_train shape: {X_train.shape}, y_train shape: {y_train.shape}")
+        print(f"   X_val shape: {X_val.shape}, y_val shape: {y_val.shape}")
+        print(f"   X_test shape: {X_test.shape}, y_test shape: {y_test.shape}")
     except Exception as e:
-        print(f"❌ 讀取錯誤: {e}")
+        print(f"[ERROR] 讀取錯誤: {e}")
         exit()
-
-    # 切分訓練集 (80%) 與測試集 (20%)
-    # [IMPORTANT] random_state=42 Ensure same split as LSTM
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # 轉 Tensor
     X_train_tensor = torch.from_numpy(X_train).to(device)
     y_train_tensor = torch.from_numpy(y_train).long().to(device)
+    X_val_tensor = torch.from_numpy(X_val).to(device)
+    y_val_tensor = torch.from_numpy(y_val).long().to(device)
     X_test_tensor = torch.from_numpy(X_test).to(device)
     y_test_tensor = torch.from_numpy(y_test).long().to(device)
 
@@ -114,6 +126,8 @@ if __name__ == "__main__":
     BATCH_SIZE = 64
     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # --- 4. 初始化模型 (Transformer 設定) ---
     INPUT_SIZE = 2
@@ -132,6 +146,7 @@ if __name__ == "__main__":
 
     # --- 5. 訓練迴圈 ---
     start_time = time.time()
+    best_val_acc = 0.0
 
     for epoch in range(EPOCHS):
         model.train()
@@ -151,24 +166,48 @@ if __name__ == "__main__":
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
         
-        epoch_acc = 100 * correct / total
-        print(f"Epoch [{epoch+1}/{EPOCHS}] Loss: {running_loss/len(train_loader):.4f} | Accuracy: {epoch_acc:.2f}%")
+        train_loss = running_loss / len(train_loader)
+        train_acc = 100 * correct / total
+        
+        # --- 驗證集評估 ---
+        model.eval()
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
+        with torch.no_grad():
+            for val_inputs, val_labels in val_loader:
+                val_outputs = model(val_inputs)
+                loss = criterion(val_outputs, val_labels)
+                val_loss += loss.item()
+                _, val_predicted = torch.max(val_outputs.data, 1)
+                val_total += val_labels.size(0)
+                val_correct += (val_predicted == val_labels).sum().item()
+                
+        val_loss /= len(val_loader)
+        val_acc = 100 * val_correct / val_total
+        
+        print(f"Epoch [{epoch+1}/{EPOCHS}] | Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}%")
+        
+        # 保存最佳模型
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model.state_dict(), model_save_path)
+            print(f"   [Improve] 偵測到驗證集表現提升，已更新最佳模型儲存！ (Best Val Acc: {best_val_acc:.2f}%)")
 
     training_time = time.time() - start_time
     print("-" * 50)
     print(f"Transformer 訓練完成! 總耗時: {training_time:.2f} 秒")
+    print(f"[Best] 最佳驗證集準確率 (Best Val Acc): {best_val_acc:.2f}%")
 
     # --- 6. 測試 ---
-    print("\n[Step 3] 評估測試集效能...")
-    model.eval()
+    print("\n[Step 3] 載入最佳模型評估測試集...")
+    best_model = MalwareDetectorTransformer(INPUT_SIZE, D_MODEL, NUM_CLASSES).to(device)
+    best_model.load_state_dict(torch.load(model_save_path))
+    best_model.eval()
     with torch.no_grad():
-        outputs = model(X_test_tensor)
+        outputs = best_model(X_test_tensor)
         _, predicted = torch.max(outputs.data, 1)
         total = y_test_tensor.size(0)
         correct = (predicted == y_test_tensor).sum().item()
         test_acc = 100 * correct / total
-        print(f"🎯 Transformer 測試集準確率: {test_acc:.2f}%")
-
-    # --- 7. 存檔 ---
-    torch.save(model.state_dict(), model_save_path)
-    print(f"\n✅ Transformer 模型已儲存為 '{model_save_path}'")
+        print(f"[TEST] Transformer 最佳模型測試集準確率: {test_acc:.2f}%")
